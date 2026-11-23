@@ -19,6 +19,21 @@ THREAD_KEYWORD = os.environ.get("THREAD_KEYWORD", "").strip() or "アウトラ�
 MIN_NEW_RES = int(os.environ.get("MIN_NEW_RES", "").strip() or "20")
 
 
+def fetch_html_cp932(url, referer=None):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+    }
+    if referer:
+        headers["Referer"] = referer
+
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as res:
+        return res.read().decode("cp932", errors="replace")
+
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -34,10 +49,7 @@ def save_state(state):
 
 def find_latest_thread_url(board_url, keyword):
     subback_url = urljoin(board_url.rstrip("/") + "/", "subback.html")
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    req = urllib.request.Request(subback_url, headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as res:
-        html = res.read().decode("cp932", errors="replace")
+    html = fetch_html_cp932(subback_url, referer=board_url)
 
     soup = BeautifulSoup(html, "html.parser")
     candidates = []
@@ -65,10 +77,7 @@ def find_latest_thread_url(board_url, keyword):
 
 
 def fetch_new_posts(thread_url, already_used_nums):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    req = urllib.request.Request(thread_url, headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as res:
-        html = res.read().decode("cp932", errors="replace")
+    html = fetch_html_cp932(thread_url, referer=BOARD_URL)
 
     soup = BeautifulSoup(html, "html.parser")
     used_set = set(str(n) for n in already_used_nums)
