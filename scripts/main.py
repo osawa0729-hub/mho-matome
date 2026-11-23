@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
@@ -53,15 +54,23 @@ def summarize_with_gemini(raw_thread_text):
 【レスデータ】
 {raw_thread_text[:25000]}
 """
-        response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.4,
-        ),
-    )
-    return json.loads(response.text)
+    last_err = None
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.4,
+                ),
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            last_err = e
+            print(f"試行{attempt + 1}回目でエラー: {e}")
+            time.sleep(2)
+    raise last_err
 
 
 def save_post(article_data, source_label):
