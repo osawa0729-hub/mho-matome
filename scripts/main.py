@@ -1,111 +1,24 @@
 import os
-import re
 import json
-import urllib.request
-from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone, timedelta
-from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 import tweepy
 
 JST = timezone(timedelta(hours=+9), "JST")
+SOURCE_FILE = "scripts/source.txt"
 POSTS_FILE = "docs/posts.json"
-STATE_FILE = "docs/state.json"
 SITE_URL = os.environ.get("SITE_URL", "").strip() or "https://osawa0729-hub.github.io/mho-matome/"
 
-BOARD_URL = os.environ.get("BOARD_URL", "").strip() or "https://krsw.5ch.net/gamesm/"
-THREAD_KEYWORD = os.environ.get("THREAD_KEYWORD", "").strip() or "アウトランダーズ"
-MIN_NEW_RES = int(os.environ.get("MIN_NEW_RES", "").strip() or "20")
 
-
-def fetch_html_cp932(url, referer=None):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        "Connection": "keep-alive",
-    }
-    if referer:
-        headers["Referer"] = referer
-
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as res:
-        return res.read().decode("cp932", errors="replace")
-
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"threads": {}}
-
-
-def save_state(state):
-    os.makedirs("docs", exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-
-def find_latest_thread_url(board_url, keyword):
-    subback_url = urljoin(board_url.rstrip("/") + "/", "subback.html")
-    html = fetch_html_cp932(subback_url, referer=board_url)
-
-    soup = BeautifulSoup(html, "html.parser")
-    candidates = []
-
-    for a in soup.select("#trad a, .thread-list a, a"):
-        title = a.text.strip()
-        href = a.get("href", "")
-        if keyword in title and href:
-            match = re.search(r"/test/read\.cgi/([^/]+)/(\d+)", href)
-            if match:
-                server_host = urlparse(board_url).netloc
-                board_key, thread_key = match.group(1), match.group(2)
-                clean_url = f"https://{server_host}/test/read.cgi/{board_key}/{thread_key}/"
-                count_match = re.search(r"\((\d+)\)\s*$", a.parent.text if a.parent else "")
-                res_count = int(count_match.group(1)) if count_match else 0
-                candidates.append((res_count, clean_url, title))
-
-    if not candidates:
-        raise RuntimeError(f"キーワード「{keyword}」に一致するスレッドが見つかりませんでした")
-
-    active = [c for c in candidates if c[0] < 1000]
-    chosen = active[0] if active else candidates[0]
-    print(f"対象スレ検出: {chosen[2]} ({chosen[0]}レス) -> {chosen[1]}")
-    return chosen[1]
-
-
-def fetch_new_posts(thread_url, already_used_nums):
-    html = fetch_html_cp932(thread_url, referer=BOARD_URL)
-
-    soup = BeautifulSoup(html, "html.parser")
-    used_set = set(str(n) for n in already_used_nums)
-    new_items = []
-    all_nums = []
-
-    for post in soup.select(".post"):
-        num = str(post.get("data-id") or (post.select_one(".number").text.strip() if post.select_one(".number") else ""))
-        if not num:
-            continue
-        all_nums.append(num)
-        if num in used_set:
-            continue
-
-        name = post.select_one(".name").text.strip() if post.select_one(".name") else "名無しのハンター"
-        date = post.select_one(".date").text.strip() if post.select_one(".date") else ""
-        uid = post.select_one(".uid").text.strip() if post.select_one(".uid") else ""
-        msg_el = post.select_one(".message")
-        if msg_el:
-            for br in msg_el.find_all("br"):
-                br.replace_with("\n")
-            body = msg_el.text.strip()
-            new_items.append((num, f"{num}: {name} {date} {uid}\n{body}"))
-
-    recent = new_items[-150:]
-    formatted_text = "\n\n".join(text for _, text in recent)
-    used_nums_in_batch = [num for num, _ in recent]
-    return formatted_text, used_nums_in_batch, all_nums
+def load_source_text():
+    if not os.path.exists(SOURCE_FILE):
+        raise RuntimeError(f"{SOURCE_FILE} が見つかりません。元ネタのレスを貼り付けて作成してください。")
+    with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+        text = f.read().strip()
+    if not text:
+        raise RuntimeError(f"{SOURCE_FILE} が空です。レスを貼り付けて保存してください。")
+    return text
 
 
 def summarize_with_gemini(raw_thread_text):
@@ -113,7 +26,7 @@ def summarize_with_gemini(raw_thread_text):
 
     prompt = f"""
 あなたは『モンスターハンターアウトランダーズ（MHO）』専門の5chまとめサイト編集長です。
-以下の未まとめレスデータ**のみ**を使い、読者が読みたくなるまとめ記事を1本作成してください。
+以下のレスデータ**のみ**を使い、読者が読みたくなるまとめ記事を1本作成してください。
 
 【厳守ルール】
 - 提供されたレスに書かれていない事実・キャラ名・数値は絶対に捏造・補完しないこと。
@@ -137,7 +50,7 @@ def summarize_with_gemini(raw_thread_text):
   ]
 }}
 
-【未まとめレスデータ】
+【レスデータ】
 {raw_thread_text[:25000]}
 """
     response = client.models.generate_content(
@@ -151,7 +64,7 @@ def summarize_with_gemini(raw_thread_text):
     return json.loads(response.text)
 
 
-def save_post(article_data, source_url):
+def save_post(article_data, source_label):
     os.makedirs("docs", exist_ok=True)
     if os.path.exists(POSTS_FILE):
         with open(POSTS_FILE, "r", encoding="utf-8") as f:
@@ -163,7 +76,7 @@ def save_post(article_data, source_url):
     new_entry = {
         "id": now.strftime("%Y%m%d%H%M%S"),
         "published_at": now.strftime("%Y/%m/%d %H:%M"),
-        "source_url": source_url,
+        "source_url": source_label,
         **article_data,
     }
     posts.insert(0, new_entry)
@@ -191,21 +104,7 @@ def post_to_x(article):
 
 
 if __name__ == "__main__":
-    state = load_state()
-    env_thread = os.environ.get("TARGET_THREAD_URL", "").strip()
-    thread_url = env_thread if env_thread else find_latest_thread_url(BOARD_URL, THREAD_KEYWORD)
-
-    thread_state = state["threads"].get(thread_url, {"used_nums": []})
-    raw_text, batch_nums, _ = fetch_new_posts(thread_url, thread_state["used_nums"])
-
-    if len(batch_nums) < MIN_NEW_RES:
-        print(f"未まとめレスが {len(batch_nums)} 件（基準: {MIN_NEW_RES} 件未満）のためスキップします")
-        raise SystemExit(0)
-
+    raw_text = load_source_text()
     article = summarize_with_gemini(raw_text)
-    saved = save_post(article, thread_url)
+    saved = save_post(article, SOURCE_FILE)
     post_to_x(saved)
-
-    merged_nums = list(dict.fromkeys(thread_state["used_nums"] + batch_nums))[-2000:]
-    state["threads"][thread_url] = {"used_nums": merged_nums}
-    save_state(state)
