@@ -12,11 +12,11 @@ import tweepy
 JST = timezone(timedelta(hours=+9), "JST")
 POSTS_FILE = "docs/posts.json"
 STATE_FILE = "docs/state.json"
-SITE_URL = os.environ.get("SITE_URL", "https://osawa0729-hub.github.io/mho-matome/")
+SITE_URL = os.environ.get("SITE_URL", "").strip() or "https://osawa0729-hub.github.io/mho-matome/"
 
-BOARD_URL = os.environ.get("BOARD_URL", "https://krsw.5ch.net/gamesm/")
-THREAD_KEYWORD = os.environ.get("THREAD_KEYWORD", "アウトランダーズ")
-MIN_NEW_RES = int(os.environ.get("MIN_NEW_RES", "20"))
+BOARD_URL = os.environ.get("BOARD_URL", "").strip() or "https://krsw.5ch.net/gamesm/"
+THREAD_KEYWORD = os.environ.get("THREAD_KEYWORD", "").strip() or "アウトランダーズ"
+MIN_NEW_RES = int(os.environ.get("MIN_NEW_RES", "").strip() or "20")
 
 
 def load_state():
@@ -166,7 +166,7 @@ def save_post(article_data, source_url):
 
 
 def post_to_x(article):
-    if not os.environ.get("X_API_KEY"):
+    if not os.environ.get("X_API_KEY", "").strip():
         print("X APIキー未設定のため投稿をスキップします")
         return
 
