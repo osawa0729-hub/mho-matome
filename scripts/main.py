@@ -1,119 +1,134 @@
-import os
 import json
-import time
+import os
+import re
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
-import tweepy
 
-JST = timezone(timedelta(hours=+9), "JST")
+# パス設定
 SOURCE_FILE = "scripts/source.txt"
 POSTS_FILE = "docs/posts.json"
-SITE_URL = os.environ.get("SITE_URL", "").strip() or "https://osawa0729-hub.github.io/mho-matome/"
+
+# タイムゾーン（日本時間）
+JST = timezone(timedelta(hours=9))
 
 
-def load_source_text():
+def load_existing_posts():
+    if not os.path.exists(POSTS_FILE):
+        return []
+    try:
+        with open(POSTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def extract_used_info(posts):
+    used_titles = []
+    used_res_nums = set()
+
+    for post in posts[:30]:  # 直近30記事分をチェック
+        title = post.get("title", "")
+        if title:
+            used_titles.append(title)
+
+        for c in post.get("comments", []):
+            if isinstance(c, dict):
+                num = str(c.get("num", "")).strip()
+                if num:
+                    used_res_nums.add(num)
+            elif isinstance(c, str):
+                m = re.match(r"^(\d+)\s*[:：]", c.strip())
+                if m:
+                    used_res_nums.add(m.group(1))
+
+    return used_titles, sorted(list(used_res_nums))
+
+
+def main():
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not set.")
+
     if not os.path.exists(SOURCE_FILE):
-        raise RuntimeError(f"{SOURCE_FILE} が見つかりません。元ネタのレスを貼り付けて作成してください。")
+        raise FileNotFoundError(f"{SOURCE_FILE} not found.")
+
     with open(SOURCE_FILE, "r", encoding="utf-8") as f:
-        text = f.read().strip()
-    if not text:
-        raise RuntimeError(f"{SOURCE_FILE} が空です。レスを貼り付けて保存してください。")
-    return text
+        raw_thread_text = f.read().strip()
 
+    if not raw_thread_text:
+        print("source.txt is empty. Exiting.")
+        return
 
-def summarize_with_gemini(raw_thread_text):
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    existing_posts = load_existing_posts()
+    used_titles, used_res_nums = extract_used_info(existing_posts)
+
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""
-あなたは『モンスターハンターアウトランダーズ（MHO）』専門の5chまとめサイト編集長です。
-以下のレスデータ**のみ**を使い、読者が読みたくなるまとめ記事を1本作成してください。
+あなたは『モンスターハンターアウトランダーズ』専門の5chまとめサイト編集者です。
+以下のスレッド本文から、まだ記事化されていない「1つの明確な話題」だけを抽出し、まとめ記事用のJSONを1件作成してください。
 
 【厳守ルール】
-- 提供されたレスに書かれていない事実・キャラ名・数値は絶対に捏造・補完しないこと。
-- 転載禁止の記載があるレスや個人情報・誹謗中傷は除外すること。
-- レス番号の掛け合いが自然につながるよう15〜25レス程度を厳選すること。
-- 出力は必ず以下のJSON形式のみとすること。
+1. タイトルは【20文字前後（15〜24文字）】で簡潔にまとめること。
+2. タイトルの語尾は「〜なのか？」「〜どう思う？」「〜すぎない？」「〜って本当？」などの【問いかけ調】を基本にすること。
+3. 要約文・解説文・前置きは一切不要。記事は「タイトル」と「厳選レス」だけで構成すること。
+4. 既存記事と話題やレスが被らないようにすること。以下の既存タイトル・使用済みレス番号は絶対に使わないこと。
+   - 既存タイトル一覧: {json.dumps(used_titles, ensure_ascii=False)}
+   - 使用済みレス番号: {json.dumps(used_res_nums, ensure_ascii=False)}
+5. レスは選択した1つの話題の流れ・オチが分かるものだけを【6〜12レス程度】厳選すること。無関係な雑談・単発の煽り・重複レスは省くこと。
+6. レスの `header` は「レス番号: 名前（IDなどは省略してスッキリさせる）」の形式にし、`body` は読みやすく改行を整えること。
 
+【出力JSONフォーマット（この構造のみ出力）】
 {{
-  "title": "【モンハンアウトランダーズ】思わずクリックしたくなる記事タイトル（45文字以内）",
-  "category": "攻略・考察 / ガチャ・キャラ / アプデ・イベント / 雑談 のいずれか1つ",
-  "summary": "記事の3行要約",
-  "tweet_text": "X投稿用の煽り文＋要約＋ハッシュタグ #モンハンアウトランダーズ #MHO （URLを除いて110文字以内）",
-  "picked_comments": [
+  "title": "20字前後の問いかけタイトル",
+  "comments": [
     {{
-      "number": "レス番号",
-      "header": "名前 日付 ID",
-      "body": "レス本文",
-      "color": "#222222 または #dc2626（重要・面白いレスは赤で強調）",
-      "is_bold": true
+      "num": "380",
+      "header": "380: 名無しですよ、名無し！",
+      "body": "レス本文"
     }}
   ]
 }}
 
-【レスデータ】
+【スレッド本文】
 {raw_thread_text[:25000]}
 """
-    last_err = None
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.4,
-                ),
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            last_err = e
-            print(f"試行{attempt + 1}回目でエラー: {e}")
-            time.sleep(2)
-    raise last_err
 
-
-def save_post(article_data, source_label):
-    os.makedirs("docs", exist_ok=True)
-    if os.path.exists(POSTS_FILE):
-        with open(POSTS_FILE, "r", encoding="utf-8") as f:
-            posts = json.load(f)
-    else:
-        posts = []
-
-    now = datetime.now(JST)
-    new_entry = {
-        "id": now.strftime("%Y%m%d%H%M%S"),
-        "published_at": now.strftime("%Y/%m/%d %H:%M"),
-        "source_url": source_label,
-        **article_data,
-    }
-    posts.insert(0, new_entry)
-    posts = posts[:50]
-
-    with open(POSTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(posts, f, ensure_ascii=False, indent=2)
-    return new_entry
-
-
-def post_to_x(article):
-    if not os.environ.get("X_API_KEY", "").strip():
-        print("X APIキー未設定のため投稿をスキップします")
-        return
-
-    client = tweepy.Client(
-        consumer_key=os.environ["X_API_KEY"],
-        consumer_secret=os.environ["X_API_SECRET"],
-        access_token=os.environ["X_ACCESS_TOKEN"],
-        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.4,
+        ),
     )
-    tweet_body = f"{article['tweet_text']}\n{SITE_URL}#post-{article['id']}"
-    res = client.create_tweet(text=tweet_body)
-    print("X投稿完了 Tweet ID:", res.data["id"])
+
+    result_text = response.text.strip()
+    new_article = json.loads(result_text)
+
+    if not new_article.get("title") or not new_article.get("comments"):
+        raise ValueError("Generated JSON is missing 'title' or 'comments'.")
+
+    # 記事メタデータ整形（summaryは持たせない）
+    now_str = datetime.now(JST).strftime("%Y/%m/%d %H:%M")
+    formatted_post = {
+        "id": datetime.now(JST).strftime("%Y%m%d%H%M%S"),
+        "title": new_article["title"].strip(),
+        "date": now_str,
+        "comments": new_article["comments"],
+    }
+
+    # 先頭に追加して保存
+    updated_posts = [formatted_post] + existing_posts
+
+    os.makedirs(os.path.dirname(POSTS_FILE), exist_ok=True)
+    with open(POSTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(updated_posts, f, ensure_ascii=False, indent=2)
+
+    print(f"Successfully added article: {formatted_post['title']}")
 
 
 if __name__ == "__main__":
-    raw_text = load_source_text()
-    article = summarize_with_gemini(raw_text)
-    saved = save_post(article, SOURCE_FILE)
-    post_to_x(saved)
+    main()
