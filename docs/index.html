@@ -1,67 +1,161 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>モンハンアウトランダーズ攻略まとめ速報｜5chまとめ</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>モンハンアウトランダーズ攻略まとめ速報</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --accent: #b83227;
+      --text: #222222;
+      --sub: #666666;
+      --border: #e2e4e8;
+      --res-header: #2b5b3c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    header {
+      background: #1e2229;
+      color: #fff;
+      padding: 18px 16px;
+      border-bottom: 4px solid var(--accent);
+      text-align: center;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      letter-spacing: 0.04em;
+    }
+    header p {
+      margin: 6px 0 0;
+      font-size: 0.82rem;
+      color: #bbb;
+    }
+    main {
+      max-width: 820px;
+      margin: 24px auto;
+      padding: 0 14px 48px;
+    }
+    article.post {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 22px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+    }
+    .post-meta {
+      font-size: 0.8rem;
+      color: var(--sub);
+      margin-bottom: 6px;
+    }
+    .post-title {
+      margin: 0 0 16px;
+      font-size: 1.25rem;
+      line-height: 1.4;
+      color: #111;
+      border-left: 5px solid var(--accent);
+      padding-left: 12px;
+    }
+    .comments {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .res-item {
+      padding-bottom: 12px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .res-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .res-header {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--res-header);
+      margin-bottom: 4px;
+    }
+    .res-body {
+      font-size: 0.96rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding-left: 8px;
+    }
+    .empty {
+      text-align: center;
+      color: var(--sub);
+      padding: 40px 0;
+    }
+  </style>
 </head>
 <body>
-  <header class="site-header">
-    <div class="container">
-      <h1><a href="./">モンハンアウトランダーズ攻略まとめ速報</a></h1>
-      <p>アイソレシア島の新着リーク・ガチャ評価・マルチ募集・5ch反応まとめ</p>
-    </div>
+  <header>
+    <h1>モンハンアウトランダーズ攻略まとめ速報</h1>
+    <p>5chの注目話題・攻略反応を厳選まとめ</p>
   </header>
 
-  <main class="container layout">
-    <section id="articles" class="main-col">
-      <p>記事を読み込み中...</p>
-    </section>
-
-    <aside class="side-col">
-      <div class="widget">
-        <h3>サイトについて</h3>
-        <p>『モンスターハンターアウトランダーズ』の5chスレッドから注目トピックを自動抽出・要約して掲載しています。</p>
-      </div>
-    </aside>
+  <main id="app">
+    <div class="empty">記事を読み込み中...</div>
   </main>
 
   <script>
-    async function loadPosts() {
-      const container = document.getElementById("articles");
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    async function renderPosts() {
+      const app = document.getElementById("app");
       try {
-        const res = await fetch("posts.json?t=" + Date.now());
+        const res = await fetch("./posts.json?t=" + Date.now());
+        if (!res.ok) throw new Error("Failed to load posts.json");
         const posts = await res.json();
-        if (!posts.length) {
-          container.innerHTML = "<p>まだ記事がありません。</p>";
+
+        if (!Array.isArray(posts) || posts.length === 0) {
+          app.innerHTML = '<div class="empty">まだ記事がありません。</div>';
           return;
         }
-        container.innerHTML = posts.map(post => `
-          <article class="post-card" id="post-${post.id}">
-            <div class="post-meta">
-              <span class="cat">${post.category}</span>
-              <time>${post.published_at}</time>
-            </div>
-            <h2 class="post-title">${post.title}</h2>
-            <div class="post-summary">${post.summary}</div>
-            <div class="thread-box">
-              ${post.picked_comments.map(c => `
-                <div class="res-item">
-                  <div class="res-head">${c.number}: ${c.header}</div>
-                  <div class="res-body" style="color:${c.color || '#222'};font-weight:${c.is_bold ? 'bold' : 'normal'}">
-                    ${c.body.replace(/\n/g, "<br>")}
-                  </div>
-                </div>
-              `).join("")}
-            </div>
-          </article>
-        `).join("");
+
+        app.innerHTML = posts.map(post => {
+          const commentsHtml = (post.comments || []).map(c => {
+            if (typeof c === "string") {
+              return `<div class="res-item"><div class="res-body">${escapeHtml(c)}</div></div>`;
+            }
+            return `
+              <div class="res-item">
+                <div class="res-header">${escapeHtml(c.header || "")}</div>
+                <div class="res-body">${escapeHtml(c.body || "")}</div>
+              </div>
+            `;
+          }).join("");
+
+          return `
+            <article class="post">
+              <div class="post-meta">${escapeHtml(post.date || "")}</div>
+              <h2 class="post-title">${escapeHtml(post.title || "無題")}</h2>
+              <div class="comments">${commentsHtml}</div>
+            </article>
+          `;
+        }).join("");
       } catch (e) {
-        container.innerHTML = "<p>記事データの読み込みに失敗しました。</p>";
+        app.innerHTML = '<div class="empty">記事の読み込みに失敗しました。</div>';
       }
     }
-    loadPosts();
+
+    renderPosts();
   </script>
 </body>
 </html>
