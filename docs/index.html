@@ -172,6 +172,8 @@
   </main>
 
   <script>
+    const DEFAULT_SOURCE_URL = "https://krsw.5ch.io/test/read.cgi/gamesm/1795777624/";
+
     function escapeHtml(str) {
       return String(str)
         .replace(/&/g, "&amp;")
@@ -228,9 +230,11 @@
             `;
           }).join("");
 
-          const sourceHtml = post.source_url
-            ? `<div class="source-box">引用元：<a href="${escapeHtml(post.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(post.source_url)}</a></div>`
-            : "";
+          const srcUrl = (post.source_url && post.source_url.startsWith("http"))
+            ? post.source_url
+            : DEFAULT_SOURCE_URL;
+
+          const sourceHtml = `<div class="source-box">引用元：<a href="${escapeHtml(srcUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(srcUrl)}</a></div>`;
 
           return `
             <article class="post">
